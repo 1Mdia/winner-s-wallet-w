@@ -1,1 +1,0 @@
-ALTER TABLE public.user_progress ADD COLUMN bank_name text, ADD COLUMN routing_number text, ADD COLUMN account_number text, ADD COLUMN bank_submitted boolean NOT NULL DEFAULT false;

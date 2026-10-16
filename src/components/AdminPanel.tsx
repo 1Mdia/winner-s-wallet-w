@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   Shield,
   Mail,
@@ -11,32 +11,23 @@ import {
   ChevronDown,
   Download,
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { listAllUsers, type UserRecord } from "@/lib/localDb";
 
-interface AdminUser {
-  email: string;
-  userName: string;
-  docsSubmitted: boolean;
-  bankSubmitted: boolean;
-  withdrawalMethod: string | null;
-  loginTs: number;
-  lastSeenTs: number | null;
-  createdAt: string;
-  daysSinceLogin: number;
-}
+const ADMIN_PASSWORD = "tiktok-admin-2024";
 
 type SortField = "createdAt" | "daysSinceLogin" | "email" | "docsSubmitted" | "bankSubmitted";
 type SortDir = "asc" | "desc";
 
-function flowStage(user: AdminUser): { label: string; color: "warning" | "success" | "destructive" } {
+function flowStage(user: UserRecord): { label: string; color: "warning" | "success" | "destructive" } {
   if (!user.docsSubmitted) return { label: "Documents", color: "warning" };
   if (!user.bankSubmitted) return { label: "Bank details", color: "warning" };
-  if (user.daysSinceLogin >= 7) return { label: "Day 7 - Failed", color: "destructive" };
-  if (user.daysSinceLogin >= 3) return { label: "Day 3+ - Approved", color: "success" };
+  const days = Math.floor((Date.now() - user.loginTs) / (1000 * 60 * 60 * 24));
+  if (days >= 7) return { label: "Day 7 - Failed", color: "destructive" };
+  if (days >= 3) return { label: "Day 3+ - Approved", color: "success" };
   return { label: "Processing", color: "warning" };
 }
 
@@ -50,42 +41,35 @@ function formatDateTime(ts: number | string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function withDays(user: UserRecord) {
+  return {
+    ...user,
+    daysSinceLogin: Math.floor((Date.now() - user.loginTs) / (1000 * 60 * 60 * 24)),
+  };
+}
+
 const AdminPanel = () => {
   const [password, setPassword] = useState("");
   const [authed, setAuthed] = useState(false);
-  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const fetchUsers = useCallback(async (pw: string) => {
-    setLoading(true);
-    setError(null);
-    const { data, error: fnError } = await supabase.functions.invoke("user-progress", {
-      body: { action: "listAll", adminPassword: pw },
-    });
-    if (fnError) {
-      const status = (fnError as { context?: { status?: number } }).context?.status;
-      if (status === 401) {
-        setError("Wrong admin password.");
-      } else {
-        setError("Failed to load data.");
-      }
-      setLoading(false);
-      return;
-    }
-    setUsers(data?.users ?? []);
-    setAuthed(true);
-    setLoading(false);
-  }, []);
+  const users = useMemo(() => listAllUsers().map(withDays), [authed, loading]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchUsers(password);
+    if (password !== ADMIN_PASSWORD) {
+      setError("Wrong admin password.");
+      return;
+    }
+    setError(null);
+    setAuthed(true);
+    setLoading(false);
   };
 
-  const handleRefresh = () => fetchUsers(password);
+  const handleRefresh = () => setLoading(true);
 
   const handleExportEmails = () => {
     const emails = sorted.map((u) => u.email).join("\n");
@@ -139,7 +123,6 @@ const AdminPanel = () => {
     day7Plus: users.filter((u) => u.daysSinceLogin >= 7).length,
   };
 
-  // --- Login gate ---
   if (!authed) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface px-4">
@@ -161,8 +144,8 @@ const AdminPanel = () => {
               autoFocus
             />
             {error && <p className="text-sm text-destructive text-center">{error}</p>}
-            <Button type="submit" className="w-full h-12 rounded-xl font-semibold" disabled={!password || loading}>
-              {loading ? "Verifying..." : "Access Panel"}
+            <Button type="submit" className="w-full h-12 rounded-xl font-semibold" disabled={!password}>
+              Access Panel
             </Button>
           </form>
         </div>
@@ -170,7 +153,6 @@ const AdminPanel = () => {
     );
   }
 
-  // --- Admin dashboard ---
   const SortIcon = ({ field }: { field: SortField }) =>
     sortField === field ? (
       sortDir === "asc" ? <ChevronUp className="inline w-3 h-3" /> : <ChevronDown className="inline w-3 h-3" />
@@ -178,7 +160,6 @@ const AdminPanel = () => {
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Header */}
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -190,7 +171,7 @@ const AdminPanel = () => {
               <Download className="w-4 h-4 mr-1.5" />
               Export Emails
             </Button>
-            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={handleRefresh}>
               <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
@@ -199,7 +180,6 @@ const AdminPanel = () => {
       </header>
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Total Users" value={stats.total} />
           <StatCard label="Docs Submitted" value={stats.docsDone} accent="warning" />
@@ -207,7 +187,6 @@ const AdminPanel = () => {
           <StatCard label="Day 7+ (Failed)" value={stats.day7Plus} accent="destructive" />
         </div>
 
-        {/* Table */}
         <div className="rounded-xl border border-border bg-card overflow-hidden shadow-sm">
           {loading && users.length === 0 ? (
             <div className="p-6 space-y-3">
@@ -301,7 +280,6 @@ const AdminPanel = () => {
           )}
         </div>
 
-        {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Docs = submitted documents</span>
           <span className="flex items-center gap-1.5"><Building className="w-3.5 h-3.5" /> Bank = submitted bank details</span>

@@ -1,4 +1,0 @@
-project_id = "bkeiwsihfjhgeztwkihx"
-
-[functions.user-progress]
-verify_jwt = false
