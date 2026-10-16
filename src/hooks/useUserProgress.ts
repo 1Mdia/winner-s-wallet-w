@@ -6,7 +6,6 @@ import {
   submitBank as dbSubmitBank,
   getToken,
   getSessionEmail,
-  clearSession,
   type PublicProgress,
 } from "@/lib/localDb";
 
